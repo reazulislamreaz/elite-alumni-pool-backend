@@ -11,7 +11,7 @@ router.use(requireAuth);
 const schema = z.object({
   name: z.string().min(2),
   description: z.string().default(""),
-  deadline: z.iso.datetime(),
+  deadline: z.coerce.date(),
   status: z.enum(["Active", "Completed", "On Hold"]).default("Active"),
 });
 
@@ -31,7 +31,7 @@ router.get("/", async (req, res) => {
 
 router.post("/", allowRoles("Admin", "ProjectManager"), async (req, res) => {
   const body = schema.parse(req.body);
-  if (new Date(body.deadline) < new Date()) throw new AppError("Please select a valid deadline.", 400);
+  if (body.deadline < new Date()) throw new AppError("Please select a valid deadline.", 400);
   const project = await Project.create({ ...body, createdBy: req.user!.userId, members: [req.user!.userId] });
   await logActivity(req.user!.userId, "Project", String(project._id), "CREATE", `Project "${project.name}" created`);
   res.status(201).json(project);
@@ -39,7 +39,7 @@ router.post("/", allowRoles("Admin", "ProjectManager"), async (req, res) => {
 
 router.patch("/:id", allowRoles("Admin", "ProjectManager"), async (req, res) => {
   const body = schema.partial().parse(req.body);
-  if (body.deadline && new Date(body.deadline) < new Date()) throw new AppError("Please select a valid deadline.", 400);
+  if (body.deadline && body.deadline < new Date()) throw new AppError("Please select a valid deadline.", 400);
   const project = await Project.findByIdAndUpdate(req.params.id, body, { new: true });
   if (!project) throw new AppError("Project not found", 404);
   await logActivity(req.user!.userId, "Project", String(project._id), "UPDATE", `Project "${project.name}" updated`);
