@@ -23,7 +23,12 @@ router.get("/notifications", async (req, res) => {
 });
 
 router.patch("/notifications/:id/read", async (req, res) => {
-  const item = await Notification.findByIdAndUpdate(req.params.id, { isRead: true }, { new: true });
+  const item = await Notification.findOneAndUpdate(
+    { _id: req.params.id, recipientId: req.user!.userId },
+    { isRead: true },
+    { new: true }
+  );
+  if (!item) return res.status(404).json({ message: "Notification not found" });
   res.json(item);
 });
 
