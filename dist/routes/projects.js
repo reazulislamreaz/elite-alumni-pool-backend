@@ -11,7 +11,7 @@ router.use(auth_1.requireAuth);
 const schema = zod_1.z.object({
     name: zod_1.z.string().min(2),
     description: zod_1.z.string().default(""),
-    deadline: zod_1.z.iso.datetime(),
+    deadline: zod_1.z.coerce.date(),
     status: zod_1.z.enum(["Active", "Completed", "On Hold"]).default("Active"),
 });
 router.get("/", async (req, res) => {
@@ -31,7 +31,7 @@ router.get("/", async (req, res) => {
 });
 router.post("/", (0, auth_1.allowRoles)("Admin", "ProjectManager"), async (req, res) => {
     const body = schema.parse(req.body);
-    if (new Date(body.deadline) < new Date())
+    if (body.deadline < new Date())
         throw new errors_1.AppError("Please select a valid deadline.", 400);
     const project = await Project_1.Project.create({ ...body, createdBy: req.user.userId, members: [req.user.userId] });
     await (0, activity_1.logActivity)(req.user.userId, "Project", String(project._id), "CREATE", `Project "${project.name}" created`);
@@ -39,7 +39,7 @@ router.post("/", (0, auth_1.allowRoles)("Admin", "ProjectManager"), async (req, 
 });
 router.patch("/:id", (0, auth_1.allowRoles)("Admin", "ProjectManager"), async (req, res) => {
     const body = schema.partial().parse(req.body);
-    if (body.deadline && new Date(body.deadline) < new Date())
+    if (body.deadline && body.deadline < new Date())
         throw new errors_1.AppError("Please select a valid deadline.", 400);
     const project = await Project_1.Project.findByIdAndUpdate(req.params.id, body, { new: true });
     if (!project)
