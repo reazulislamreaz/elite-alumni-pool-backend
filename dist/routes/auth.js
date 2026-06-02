@@ -8,9 +8,9 @@ const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const zod_1 = require("zod");
 const User_1 = require("../models/User");
 const auth_1 = require("../utils/auth");
-const env_1 = require("../config/env");
 const auth_2 = require("../middlewares/auth");
 const errors_1 = require("../utils/errors");
+const seedDemoUsers_1 = require("../services/seedDemoUsers");
 const router = (0, express_1.Router)();
 const authSchema = zod_1.z.object({
     email: zod_1.z.email(),
@@ -44,17 +44,15 @@ router.post("/login", async (req, res) => {
     const token = (0, auth_1.signToken)(String(user._id), user.role);
     res.json({ token, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
 });
-router.post("/demo-login", async (_req, res) => {
-    let user = await User_1.User.findOne({ email: env_1.env.demoEmail });
-    if (!user) {
-        user = await User_1.User.create({
-            name: "Demo User",
-            email: env_1.env.demoEmail,
-            passwordHash: await bcryptjs_1.default.hash(env_1.env.demoPassword, 10),
-            role: "Admin",
-            isDemo: true,
-        });
-    }
+const demoRoleSchema = zod_1.z.object({
+    role: zod_1.z.enum(["Admin", "ProjectManager", "TeamMember"]).optional(),
+});
+router.post("/demo-login", async (req, res) => {
+    const { role } = demoRoleSchema.parse(req.body ?? {});
+    const demo = (0, seedDemoUsers_1.getDemoUserByRole)((role || "Admin"));
+    const user = await User_1.User.findOne({ email: demo.email });
+    if (!user)
+        throw new errors_1.AppError("Demo account not ready. Restart the API server.", 503);
     const token = (0, auth_1.signToken)(String(user._id), user.role);
     res.json({ token, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
 });

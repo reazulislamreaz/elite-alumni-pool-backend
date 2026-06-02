@@ -16,6 +16,7 @@ const dashboard_1 = __importDefault(require("./routes/dashboard"));
 const collaboration_1 = __importDefault(require("./routes/collaboration"));
 const users_1 = __importDefault(require("./routes/users"));
 const error_1 = require("./middlewares/error");
+const seedDemoUsers_1 = require("./services/seedDemoUsers");
 const app = (0, express_1.default)();
 app.use((0, helmet_1.default)());
 app.use((0, cors_1.default)({ origin: env_1.env.clientUrl }));
@@ -31,6 +32,7 @@ app.use("/api/users", users_1.default);
 app.use(error_1.errorHandler);
 const bootstrap = async () => {
     await mongoose_1.default.connect(env_1.env.mongoUri);
+    await (0, seedDemoUsers_1.seedDemoUsers)();
     app.listen(env_1.env.port, () => {
         console.log(`API running on ${env_1.env.port}`);
     });

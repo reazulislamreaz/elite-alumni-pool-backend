@@ -3,9 +3,10 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { User } from "../models/User";
 import { signToken } from "../utils/auth";
-import { env } from "../config/env";
 import { requireAuth } from "../middlewares/auth";
 import { AppError } from "../utils/errors";
+import { getDemoUserByRole } from "../services/seedDemoUsers";
+import { Role } from "../types/common";
 
 const router = Router();
 const authSchema = z.object({
@@ -40,17 +41,15 @@ router.post("/login", async (req, res) => {
   res.json({ token, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
 });
 
-router.post("/demo-login", async (_req, res) => {
-  let user = await User.findOne({ email: env.demoEmail });
-  if (!user) {
-    user = await User.create({
-      name: "Demo User",
-      email: env.demoEmail,
-      passwordHash: await bcrypt.hash(env.demoPassword, 10),
-      role: "Admin",
-      isDemo: true,
-    });
-  }
+const demoRoleSchema = z.object({
+  role: z.enum(["Admin", "ProjectManager", "TeamMember"]).optional(),
+});
+
+router.post("/demo-login", async (req, res) => {
+  const { role } = demoRoleSchema.parse(req.body ?? {});
+  const demo = getDemoUserByRole((role || "Admin") as Role);
+  const user = await User.findOne({ email: demo.email });
+  if (!user) throw new AppError("Demo account not ready. Restart the API server.", 503);
   const token = signToken(String(user._id), user.role);
   res.json({ token, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
 });

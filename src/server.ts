@@ -11,6 +11,7 @@ import dashboardRoutes from "./routes/dashboard";
 import collaborationRoutes from "./routes/collaboration";
 import userRoutes from "./routes/users";
 import { errorHandler } from "./middlewares/error";
+import { seedDemoUsers } from "./services/seedDemoUsers";
 
 const app = express();
 app.use(helmet());
@@ -29,6 +30,7 @@ app.use(errorHandler);
 
 const bootstrap = async () => {
   await mongoose.connect(env.mongoUri);
+  await seedDemoUsers();
   app.listen(env.port, () => {
     console.log(`API running on ${env.port}`);
   });
