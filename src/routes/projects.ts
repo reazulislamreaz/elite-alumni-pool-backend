@@ -1,17 +1,14 @@
 import { Router } from "express";
 import { z } from "zod";
 import { Project } from "../models/Project";
+import { User } from "../models/User";
 import { allowRoles, requireAuth } from "../middlewares/auth";
 import { AppError } from "../utils/errors";
 import { logActivity } from "../services/activity";
+import { startOfToday } from "../utils/dates";
 
 const router = Router();
 router.use(requireAuth);
-const startOfToday = () => {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
-};
 
 const schema = z.object({
   name: z.string().min(2),
@@ -22,8 +19,8 @@ const schema = z.object({
 
 router.get("/", async (req, res) => {
   const { search, status, page = "1", limit = "10", sort = "-createdAt" } = req.query as Record<string, string>;
-  const q: any = {};
-  if (search) q.$text = { $search: search };
+  const q: Record<string, unknown> = {};
+  if (search) q.name = { $regex: search, $options: "i" };
   if (status) q.status = status;
   const items = await Project.find(q)
     .sort(sort)
@@ -60,14 +57,21 @@ router.delete("/:id", allowRoles("Admin", "ProjectManager"), async (req, res) =>
 
 router.post("/:id/members", allowRoles("Admin", "ProjectManager"), async (req, res) => {
   const body = z.object({ memberIds: z.array(z.string()).min(1) }).parse(req.body);
-  const project = await Project.findByIdAndUpdate(
-    req.params.id,
-    { $addToSet: { members: { $each: body.memberIds } } },
-    { new: true }
-  );
+  const project = await Project.findById(req.params.id);
   if (!project) throw new AppError("Project not found", 404);
-  await logActivity(req.user!.userId, "Project", String(project._id), "ADD_MEMBER", "Members added to project");
-  res.json(project);
+  const members = await User.find({ _id: { $in: body.memberIds } }).select("name");
+  project.members = [...new Set([...project.members.map(String), ...body.memberIds])] as any;
+  await project.save();
+  const names = members.map((m) => m.name).join(", ");
+  await logActivity(
+    req.user!.userId,
+    "Project",
+    String(project._id),
+    "ADD_MEMBER",
+    `Member${members.length > 1 ? "s" : ""} added to "${project.name}" (${names})`
+  );
+  const updated = await Project.findById(project._id).populate("members", "name email role");
+  res.json(updated);
 });
 
 export default router;

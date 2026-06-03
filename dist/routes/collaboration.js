@@ -11,12 +11,13 @@ const Comment_1 = require("../models/Comment");
 const Task_1 = require("../models/Task");
 const Notification_1 = require("../models/Notification");
 const ActivityLog_1 = require("../models/ActivityLog");
+const activity_1 = require("../services/activity");
 const router = (0, express_1.Router)();
 const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage() });
 router.use(auth_1.requireAuth);
 router.get("/activities", async (req, res) => {
-    const limit = Number(req.query.limit || 10);
-    const items = await ActivityLog_1.ActivityLog.find().sort("-createdAt").limit(limit);
+    const limit = Math.min(Number(req.query.limit || 10), 10);
+    const items = await ActivityLog_1.ActivityLog.find().sort("-createdAt").limit(limit).populate("actorId", "name");
     res.json(items);
 });
 router.get("/notifications", async (req, res) => {
@@ -35,7 +36,10 @@ router.get("/tasks/:taskId/comments", async (req, res) => {
 });
 router.post("/tasks/:taskId/comments", async (req, res) => {
     const body = zod_1.z.object({ body: zod_1.z.string().min(1) }).parse(req.body);
+    const task = await Task_1.Task.findById(req.params.taskId);
     const item = await Comment_1.Comment.create({ taskId: req.params.taskId, authorId: req.user.userId, body: body.body });
+    if (task)
+        await (0, activity_1.logActivity)(req.user.userId, "Task", String(task._id), "COMMENT", `Comment added on task "${task.title}"`);
     res.status(201).json(item);
 });
 router.post("/tasks/:taskId/attachments", upload.single("file"), async (req, res) => {

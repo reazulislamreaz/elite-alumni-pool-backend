@@ -3,16 +3,13 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const zod_1 = require("zod");
 const Project_1 = require("../models/Project");
+const User_1 = require("../models/User");
 const auth_1 = require("../middlewares/auth");
 const errors_1 = require("../utils/errors");
 const activity_1 = require("../services/activity");
+const dates_1 = require("../utils/dates");
 const router = (0, express_1.Router)();
 router.use(auth_1.requireAuth);
-const startOfToday = () => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d;
-};
 const schema = zod_1.z.object({
     name: zod_1.z.string().min(2),
     description: zod_1.z.string().default(""),
@@ -23,7 +20,7 @@ router.get("/", async (req, res) => {
     const { search, status, page = "1", limit = "10", sort = "-createdAt" } = req.query;
     const q = {};
     if (search)
-        q.$text = { $search: search };
+        q.name = { $regex: search, $options: "i" };
     if (status)
         q.status = status;
     const items = await Project_1.Project.find(q)
@@ -36,7 +33,7 @@ router.get("/", async (req, res) => {
 });
 router.post("/", (0, auth_1.allowRoles)("Admin", "ProjectManager"), async (req, res) => {
     const body = schema.parse(req.body);
-    if (body.deadline < startOfToday())
+    if (body.deadline < (0, dates_1.startOfToday)())
         throw new errors_1.AppError("Please select a valid deadline.", 400);
     const project = await Project_1.Project.create({ ...body, createdBy: req.user.userId, members: [req.user.userId] });
     await (0, activity_1.logActivity)(req.user.userId, "Project", String(project._id), "CREATE", `Project "${project.name}" created`);
@@ -44,7 +41,7 @@ router.post("/", (0, auth_1.allowRoles)("Admin", "ProjectManager"), async (req, 
 });
 router.patch("/:id", (0, auth_1.allowRoles)("Admin", "ProjectManager"), async (req, res) => {
     const body = schema.partial().parse(req.body);
-    if (body.deadline && body.deadline < startOfToday())
+    if (body.deadline && body.deadline < (0, dates_1.startOfToday)())
         throw new errors_1.AppError("Please select a valid deadline.", 400);
     const project = await Project_1.Project.findByIdAndUpdate(req.params.id, body, { new: true });
     if (!project)
@@ -61,11 +58,16 @@ router.delete("/:id", (0, auth_1.allowRoles)("Admin", "ProjectManager"), async (
 });
 router.post("/:id/members", (0, auth_1.allowRoles)("Admin", "ProjectManager"), async (req, res) => {
     const body = zod_1.z.object({ memberIds: zod_1.z.array(zod_1.z.string()).min(1) }).parse(req.body);
-    const project = await Project_1.Project.findByIdAndUpdate(req.params.id, { $addToSet: { members: { $each: body.memberIds } } }, { new: true });
+    const project = await Project_1.Project.findById(req.params.id);
     if (!project)
         throw new errors_1.AppError("Project not found", 404);
-    await (0, activity_1.logActivity)(req.user.userId, "Project", String(project._id), "ADD_MEMBER", "Members added to project");
-    res.json(project);
+    const members = await User_1.User.find({ _id: { $in: body.memberIds } }).select("name");
+    project.members = [...new Set([...project.members.map(String), ...body.memberIds])];
+    await project.save();
+    const names = members.map((m) => m.name).join(", ");
+    await (0, activity_1.logActivity)(req.user.userId, "Project", String(project._id), "ADD_MEMBER", `Member${members.length > 1 ? "s" : ""} added to "${project.name}" (${names})`);
+    const updated = await Project_1.Project.findById(project._id).populate("members", "name email role");
+    res.json(updated);
 });
 exports.default = router;
 //# sourceMappingURL=projects.js.map

@@ -6,14 +6,15 @@ import { Comment } from "../models/Comment";
 import { Task } from "../models/Task";
 import { Notification } from "../models/Notification";
 import { ActivityLog } from "../models/ActivityLog";
+import { logActivity } from "../services/activity";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 router.use(requireAuth);
 
 router.get("/activities", async (req, res) => {
-  const limit = Number((req.query.limit as string) || 10);
-  const items = await ActivityLog.find().sort("-createdAt").limit(limit);
+  const limit = Math.min(Number((req.query.limit as string) || 10), 10);
+  const items = await ActivityLog.find().sort("-createdAt").limit(limit).populate("actorId", "name");
   res.json(items);
 });
 
@@ -39,7 +40,9 @@ router.get("/tasks/:taskId/comments", async (req, res) => {
 
 router.post("/tasks/:taskId/comments", async (req, res) => {
   const body = z.object({ body: z.string().min(1) }).parse(req.body);
+  const task = await Task.findById(req.params.taskId);
   const item = await Comment.create({ taskId: req.params.taskId, authorId: req.user!.userId, body: body.body });
+  if (task) await logActivity(req.user!.userId, "Task", String(task._id), "COMMENT", `Comment added on task "${task.title}"`);
   res.status(201).json(item);
 });
 
