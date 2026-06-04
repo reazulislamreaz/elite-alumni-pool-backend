@@ -18,6 +18,12 @@ const authSchema = z.object({
 
 router.post("/signup", async (req, res) => {
   const body = authSchema.parse(req.body);
+  // Public signup may only create Team Member accounts. Admin and Project
+  // Manager are privileged roles assigned internally (or via demo login), so a
+  // self-registering user must never be able to grant them to themselves.
+  if (body.role && body.role !== "TeamMember") {
+    throw new AppError("Public signup is limited to Team Member accounts. Admin and Manager roles are assigned by an administrator.", 403);
+  }
   const existing = await User.findOne({ email: body.email });
   if (existing) throw new AppError("Email already registered", 409);
   const passwordHash = await bcrypt.hash(body.password, 10);
@@ -25,7 +31,7 @@ router.post("/signup", async (req, res) => {
     name: body.name || body.email.split("@")[0],
     email: body.email,
     passwordHash,
-    role: body.role || "TeamMember",
+    role: "TeamMember",
   });
   const token = signToken(String(user._id), user.role);
   res.json({ token, user: { id: user._id, name: user.name, email: user.email, role: user.role } });

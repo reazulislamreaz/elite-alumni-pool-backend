@@ -7,7 +7,7 @@ import { requireAuth } from "../middlewares/auth";
 import { AppError } from "../utils/errors";
 import { logActivity } from "../services/activity";
 import { Notification } from "../models/Notification";
-import { startOfToday } from "../utils/dates";
+import { isPastDeadline, startOfToday } from "../utils/dates";
 
 const router = Router();
 router.use(requireAuth);
@@ -22,7 +22,30 @@ const schema = z.object({
   status: z.enum(["Todo", "In Progress", "Completed"]).default("Todo"),
 });
 
+// Update schema has NO defaults, so `.partial()` only keeps the keys the
+// client actually sent. Reusing the create schema (with defaults) on a patch
+// injected description/priority/status into every request — that broke
+// TeamMember status updates (RBAC saw extra keys → 403) and silently wiped
+// description / reset priority on Admin/Manager quick status changes.
+const updateSchema = z
+  .object({
+    projectId: z.string(),
+    title: z.string().min(2),
+    description: z.string(),
+    assignedTo: z.string(),
+    dueDate: z.coerce.date(),
+    priority: z.enum(["High", "Medium", "Low"]),
+    status: z.enum(["Todo", "In Progress", "Completed"]),
+  })
+  .partial();
+
 const canMutateTask = (role: string) => role === "Admin" || role === "ProjectManager";
+
+// A task may only be assigned to someone who belongs to its project. Members
+// are added to a project first (POST /projects/:id/members), then become
+// assignable — matching the "add members → assign tasks" flow in the spec.
+const isProjectMember = (project: { members: unknown[] }, userId: string) =>
+  project.members.map(String).includes(userId);
 
 const priorityOrder: Record<string, number> = { High: 3, Medium: 2, Low: 1 };
 
@@ -64,9 +87,11 @@ router.get("/", async (req, res) => {
 router.post("/", async (req, res) => {
   if (!canMutateTask(req.user!.role)) throw new AppError("Forbidden", 403);
   const body = schema.parse(req.body);
-  if (body.dueDate < startOfToday()) throw new AppError("Please select a valid deadline.", 400);
+  if (isPastDeadline(body.dueDate)) throw new AppError("Please select a valid deadline.", 400);
   const project = await Project.findById(body.projectId);
   if (!project) throw new AppError("Project not found", 404);
+  if (!isProjectMember(project, body.assignedTo))
+    throw new AppError("You can only assign tasks to members of this project. Add the member to the project first.", 400);
 
   const normalizedTitle = body.title.trim().toLowerCase();
   const duplicate = await Task.findOne({ projectId: body.projectId, normalizedTitle });
@@ -111,7 +136,7 @@ router.patch("/bulk", async (req, res) => {
 });
 
 router.patch("/:id", async (req, res) => {
-  const body = schema.partial().parse(req.body);
+  const body = updateSchema.parse(req.body);
   const existing = await Task.findById(req.params.id);
   if (!existing) throw new AppError("Task not found", 404);
   const isOwner = String(existing.assignedTo) === req.user!.userId;
@@ -121,8 +146,20 @@ router.patch("/:id", async (req, res) => {
     const onlyStatusUpdate = keys.length === 1 && keys[0] === "status";
     if (!(isOwner && onlyStatusUpdate && body.status)) throw new AppError("Forbidden", 403);
   }
-  if (existing.status === "Completed" && body.assignedTo) throw new AppError("Completed tasks cannot be reassigned.", 400);
-  if (body.dueDate && body.dueDate < startOfToday()) throw new AppError("Please select a valid deadline.", 400);
+  // Only block an actual reassignment of a completed task — editing other
+  // fields (or re-saving the same assignee) must still be allowed.
+  const isReassign = body.assignedTo && body.assignedTo !== String(existing.assignedTo);
+  if (existing.status === "Completed" && isReassign) throw new AppError("Completed tasks cannot be reassigned.", 400);
+  if (body.dueDate && isPastDeadline(body.dueDate)) throw new AppError("Please select a valid deadline.", 400);
+
+  // When the assignee (or the task's project) changes, the new assignee must be
+  // a member of the effective project.
+  if (body.assignedTo) {
+    const project = await Project.findById(body.projectId || existing.projectId);
+    if (!project) throw new AppError("Project not found", 404);
+    if (!isProjectMember(project, body.assignedTo))
+      throw new AppError("You can only assign tasks to members of this project. Add the member to the project first.", 400);
+  }
 
   if (body.title) {
     const normalizedTitle = body.title.trim().toLowerCase();

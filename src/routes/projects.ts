@@ -5,7 +5,7 @@ import { User } from "../models/User";
 import { allowRoles, requireAuth } from "../middlewares/auth";
 import { AppError } from "../utils/errors";
 import { logActivity } from "../services/activity";
-import { startOfToday } from "../utils/dates";
+import { isPastDeadline } from "../utils/dates";
 
 const router = Router();
 router.use(requireAuth);
@@ -16,6 +16,18 @@ const schema = z.object({
   deadline: z.coerce.date(),
   status: z.enum(["Active", "Completed", "On Hold"]).default("Active"),
 });
+
+// No defaults here: Zod v4's `.partial()` does not strip `.default()`, so
+// reusing the create schema on a patch would inject description="" / status
+// ="Active" and wipe those fields whenever the client sent only a subset.
+const updateSchema = z
+  .object({
+    name: z.string().min(2),
+    description: z.string(),
+    deadline: z.coerce.date(),
+    status: z.enum(["Active", "Completed", "On Hold"]),
+  })
+  .partial();
 
 router.get("/", async (req, res) => {
   const { search, status, page = "1", limit = "10", sort = "-createdAt" } = req.query as Record<string, string>;
@@ -33,15 +45,15 @@ router.get("/", async (req, res) => {
 
 router.post("/", allowRoles("Admin", "ProjectManager"), async (req, res) => {
   const body = schema.parse(req.body);
-  if (body.deadline < startOfToday()) throw new AppError("Please select a valid deadline.", 400);
+  if (isPastDeadline(body.deadline)) throw new AppError("Please select a valid deadline.", 400);
   const project = await Project.create({ ...body, createdBy: req.user!.userId, members: [req.user!.userId] });
   await logActivity(req.user!.userId, "Project", String(project._id), "CREATE", `Project "${project.name}" created`);
   res.status(201).json(project);
 });
 
 router.patch("/:id", allowRoles("Admin", "ProjectManager"), async (req, res) => {
-  const body = schema.partial().parse(req.body);
-  if (body.deadline && body.deadline < startOfToday()) throw new AppError("Please select a valid deadline.", 400);
+  const body = updateSchema.parse(req.body);
+  if (body.deadline && isPastDeadline(body.deadline)) throw new AppError("Please select a valid deadline.", 400);
   const project = await Project.findByIdAndUpdate(req.params.id, body, { new: true });
   if (!project) throw new AppError("Project not found", 404);
   await logActivity(req.user!.userId, "Project", String(project._id), "UPDATE", `Project "${project.name}" updated`);
